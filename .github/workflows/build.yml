@@ -1,0 +1,117 @@
+name: Build Flashable Kernel ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: '内核名称（如 MyContainerKernel）'
+        required: true
+        default: "RMX1901-ContainerKernel"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - name: Set Kernel Name
+      run: |
+        echo "KERNEL_NAME=$(echo '${{ github.event.inputs.kernel_name }}')" >> $GITHUB_ENV
+
+    - name: Checkout Kernel Source
+      run: |
+        git clone --depth=1 --branch lineage-18.0 \
+          https://github.com/SagarMakhar/android_kernel_realme_sdm710 android-kernel
+        cd android-kernel && echo "✅ 内核已克隆"
+
+    - name: Patch Defconfig for Container Support
+      working-directory: android-kernel
+      run: |
+        CONFIG_FILE="arch/arm64/configs/RMX1901_defconfig"
+        [ -f "$CONFIG_FILE" ] || { echo "❌ 文件不存在: $CONFIG_FILE"; exit 1; }
+
+        cat >> $CONFIG_FILE << 'EOF'
+
+# === 容器支持配置（自动注入）===
+CONFIG_NAMESPACES=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_USER_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+CONFIG_CGROUPS=y
+CONFIG_CGROUP_MEMORY=y
+CONFIG_MEMCG=y
+CONFIG_MEMCG_SWAP=y
+CONFIG_OVERLAY_FS=y
+CONFIG_OVERLAY_FS_REDIRECT_DIR=y
+CONFIG_OVERLAY_FS_INDEX=y
+CONFIG_IKCONFIG=y
+CONFIG_IKCONFIG_PROC=y
+CONFIG_CHECKPOINT_RESTORE=y
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+CONFIG_BRIDGE_NETFILTER=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NF_DEFRAG_IPV4=y
+CONFIG_NF_DEFRAG_IPV6=y
+CONFIG_SECURITY_SELINUX=y
+EOF
+        echo "✅ 容器支持配置已注入"
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison flex libssl-dev libelf-dev zip
+
+    - name: Download Toolchains
+      run: |
+        mkdir tc
+        wget -qO- https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r487747.tar.gz | tar -xz -C tc/
+        wget -qO- https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android13-release.tar.gz | tar -xz -C tc/
+        ln -sf $(pwd)/tc/aarch64-linux-android-4.9/bin/* tc/
+        echo "PATH=$(pwd)/tc:$PATH" >> $GITHUB_ENV
+
+    - name: Build Kernel
+      working-directory: android-kernel
+      env:
+        ARCH: arm64
+        SUBARCH: arm64
+        CROSS_COMPILE: aarch64-linux-android-
+        CLANG_TRIPLE: aarch64-linux-gnu-
+        CC: clang
+      run: |
+        make O=out RMX1901_defconfig
+        make O=out -j$(nproc) Image.gz-dtb dtbo.img
+        cp out/Image.gz-dtb ${{ github.workspace }}/
+        cp out/dtbo.img ${{ github.workspace }} || touch ${{ github.workspace }}/dtbo.img
+        echo "✅ 内核编译完成"
+
+    - name: Download AnyKernel3
+      run: |
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+        cd AnyKernel3
+        cp ${{ github.workspace }}/Image.gz-dtb zImage
+        cp ${{ github.workspace }}/dtbo.img . 2>/dev/null || echo "no dtbo.img"
+        sed -i 's|kernel.string=.*|kernel.string=Built with GitHub Actions|' anykernel.sh
+        sed -i 's|do.devicecheck=1|do.devicecheck=1|' anykernel.sh
+        echo 'device.name1=RMX1901' >> anykernel.sh
+        echo 'device.name2=RMX1903' >> anykernel.sh
+        sed -i 's|supported.versions=.*|supported.versions=11|' anykernel.sh
+        echo "✅ AnyKernel3 配置完成"
+
+    - name: Create Flashable ZIP
+      run: |
+        cd AnyKernel3
+        ZIP_NAME="${KERNEL_NAME}-$(date +%Y%m%d).zip"
+        ./anykernel.sh
+        mv $ZIP_NAME ${{ github.workspace }}/
+        echo "ZIP_PATH=${{ github.workspace }}/$ZIP_NAME" >> $GITHUB_ENV
+        echo "✅ 刷机包生成: $ZIP_NAME"
+
+    - name: Upload ZIP to Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: flashable-kernel-zip
+        path: ${{ env.ZIP_PATH }}
+        retention-days: 14
