@@ -68,13 +68,49 @@ jobs:
     - name: Download Toolchains
       run: |
         mkdir tc
-        # 下载 Clang
-        wget -qO- https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/clang-r487747.tar.gz | tar -xz -C tc/
-        # 下载 GCC
-        wget -qO- https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android13-release.tar.gz | tar -xz -C tc/
-        # 创建符号链接
-        ln -sf $(pwd)/tc/aarch64-linux-android-4.9/bin/* tc/
+        
+        # === 下载 Clang r487747（来自 LineageOS 镜像）===
+        echo "📥 正在下载 Clang r487747..."
+        wget -q --show-progress -O clang.tar.gz \
+          https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86/archive/refs/tags/android-13.0.0_r4.tar.gz
+
+        echo "📦 解压 Clang..."
+        mkdir -p tc/clang-r487747
+        tar -xzf clang.tar.gz -C tc/clang-r487747 --strip-components=3 \
+          android_prebuilts_clang_host_linux-x86-android-13.0.0_r4/clang-r487747/
+        rm -f clang.tar.gz
+
+        # === 下载 GCC aarch64-linux-android-4.9 ===
+        echo "📥 正在下载 GCC aarch64-linux-android-4.9..."
+        wget -q --show-progress -O gcc.tar.gz \
+          https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android13-release.tar.gz
+
+        echo "📦 解压 GCC..."
+        mkdir -p tc/gcc-arm64
+        tar -xzf gcc.tar.gz -C tc/gcc-arm64
+        rm -f gcc.tar.gz
+
+        # === 创建符号链接，统一到 tc/ 目录下 ===
+        ln -sf $(pwd)/tc/clang-r487747/bin/* tc/
+        ln -sf $(pwd)/tc/gcc-arm64/bin/* tc/
+
+        # 添加工具链到 PATH
         echo "PATH=$(pwd)/tc:$PATH" >> $GITHUB_ENV
+
+        # 验证安装结果
+        if command -v clang &> /dev/null; then
+          echo "✅ Clang 已就绪: $(command -v clang)"
+        else
+          echo "❌ Clang 未找到！"
+          exit 1
+        fi
+
+        if ls tc/ | grep -q "aarch64-linux-android-gcc"; then
+          echo "✅ GCC 已就绪"
+        else
+          echo "❌ GCC 未找到！"
+          exit 1
+        fi
 
     - name: Build Kernel
       working-directory: android-kernel
@@ -86,7 +122,11 @@ jobs:
         CC: clang
       run: |
         make O=out RMX1901_defconfig
+        echo "✅ defconfig 已生成"
+        
+        echo "🔄 开始编译内核..."
         make O=out -j$(nproc) Image.gz-dtb dtbo.img
+        
         cp out/Image.gz-dtb ${{ github.workspace }}/
         cp out/dtbo.img ${{ github.workspace }} || touch ${{ github.workspace }}/dtbo.img
         echo "✅ 内核编译完成"
@@ -96,12 +136,14 @@ jobs:
         git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
         cd AnyKernel3
         cp ${{ github.workspace }}/Image.gz-dtb zImage
-        cp ${{ github.workspace }}/dtbo.img . 2>/dev/null || echo "no dtbo.img"
+        cp ${{ github.workspace }}/dtbo.img . 2>/dev/null || echo "⚠️ 无 dtbo.img"
+        
         sed -i 's|kernel.string=.*|kernel.string=Built with GitHub Actions|' anykernel.sh
         sed -i 's|do.devicecheck=1|do.devicecheck=1|' anykernel.sh
         echo 'device.name1=RMX1901' >> anykernel.sh
         echo 'device.name2=RMX1903' >> anykernel.sh
         sed -i 's|supported.versions=.*|supported.versions=11|' anykernel.sh
+        
         echo "✅ AnyKernel3 配置完成"
 
     - name: Create Flashable ZIP
@@ -111,6 +153,7 @@ jobs:
         ./anykernel.sh
         mv "$ZIP_NAME" ${{ github.workspace }}/
         echo "ZIP_PATH=${{ github.workspace }}/$ZIP_NAME" >> $GITHUB_ENV
+        echo "🎉 ZIP 包已生成: $ZIP_NAME"
 
     - name: Upload ZIP to Artifacts
       uses: actions/upload-artifact@v4
