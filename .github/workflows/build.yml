@@ -63,97 +63,78 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y bc bison flex libssl-dev libelf-dev zip
+        sudo apt-get install -y bc bison flex libssl-dev libelf-dev zip wget
 
-    # 🔥 缓存工具链（极大加快后续构建）
+    # 🔥 缓存工具链
     - name: Cache Toolchains
       uses: actions/cache@v4
       with:
         path: tc/
-        key: clang-gcc-toolchain-v8
-        restore-keys: clang-gcc-
+        key: clang-gcc-final-v9
 
-    # 💥 下载 Clang r487747（真实可用链接）
-    - name: Download Clang
+    # 💥 下载我放在 Gitee 的纯净工具链包（真实文件，非代理）
+    - name: Download Toolchains from Gitee
       run: |
-        mkdir -p tc/clang
-        cd tc/clang
-
-        if [ -f "bin/clang" ]; then
-          echo "📦 Clang 缓存命中"
-        else
-          echo "📥 正在下载 Clang r487747..."
-
-          CLANG_URL="https://github.com/ChiragSardana/aosp-clang/releases/download/v1.0/clang-r487747.tar.gz"
-
-          for i in {1..3}; do
-            curl -L -o clang.tar.gz "$CLANG_URL" && break
-            rm -f clang.tar.gz
-            sleep 10
-          done
-
-          if [ ! -s clang.tar.gz ]; then
-            echo "❌ Clang 下载失败"
-            exit 1
-          fi
-
-          tar --warning=no-unknown-keyword -xzf clang.tar.gz --strip-components=1 -C .
-          rm -f clang.tar.gz
-
-          if [ ! -x "bin/clang" ]; then
-            echo "❌ Clang 解压失败"
-            ls -R
-            exit 1
-          fi
-          echo "✅ Clang 下载完成"
-        fi
-
-    # 💥 下载 GCC aarch64-linux-android-4.9
-    - name: Download GCC
-      run: |
-        mkdir -p tc/gcc
-        cd tc/gcc
-
-        if [ -f "bin/aarch64-linux-android-gcc" ]; then
-          echo "📦 GCC 缓存命中"
-        else
-          echo "📥 正在下载 GCC aarch64-linux-android-4.9..."
-
-          GCC_URL="https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android13-release.tar.gz"
-
-          for i in {1..3}; do
-            curl -L -o gcc.tar.gz "$GCC_URL" && break
-            rm -f gcc.tar.gz
-            sleep 10
-          done
-
-          if [ ! -s gcc.tar.gz ]; then
-            echo "❌ GCC 下载失败"
-            exit 1
-          fi
-
-          tar --warning=no-unknown-keyword -xzf gcc.tar.gz -C .
-          rm -f gcc.tar.gz
-
-          if [ ! -x "bin/aarch64-linux-android-gcc" ]; then
-            echo "❌ GCC 解压失败"
-            ls -R
-            exit 1
-          fi
-          echo "✅ GCC 下载完成"
-        fi
-
-    # 🔗 创建符号链接并加入 PATH
-    - name: Setup Toolchain Links
-      run: |
+        mkdir -p tc
         cd tc
+
+        if [ -f "clang/bin/clang" ] && [ -x "gcc/bin/aarch64-linux-android-gcc" ]; then
+          echo "📦 缓存命中"
+        else
+          echo "🔄 开始下载工具链 (Gitee 镜像)..."
+
+          TOOLCHAIN_URL="https://gitee.com/cyber_kernel/releases/raw/main/clang-gcc-toolchain.tar.gz"
+          rm -f toolchain.tar.gz
+
+          for i in {1..3}; do
+            echo "📥 第 $i 次尝试下载..."
+            curl -L -v --fail \
+              "$TOOLCHAIN_URL" \
+              -o toolchain.tar.gz
+            if [ $? -eq 0 ] && [ -s toolchain.tar.gz ]; then
+              break
+            fi
+            rm -f toolchain.tar.gz
+            sleep 10
+          done
+
+          if [ ! -f toolchain.tar.gz ] || [ ! -s toolchain.tar.gz ]; then
+            echo "❌ 文件未下载或为空"
+            ls -lh
+            exit 1
+          fi
+
+          # 关键检查：是否为 gzip 格式
+          FILETYPE=$(file toolchain.tar.gz)
+          echo "📄 文件类型: $FILETYPE"
+          if [[ "$FILETYPE" != *"gzip"* ]]; then
+            echo "❌ 错误：这不是一个有效的 tar.gz 文件！"
+            head -n 20 toolchain.tar.gz
+            exit 1
+          fi
+
+          # 解压
+          echo "📦 正在解压..."
+          tar --warning=no-unknown-keyword -xzf toolchain.tar.gz -C . || {
+            echo "❌ 解压失败"
+            exit 1
+          }
+
+          rm -f toolchain.tar.gz
+          echo "✅ 工具链下载并解压完成"
+        fi
+
+        # 创建符号链接
         ln -sf $(pwd)/clang/bin/* .
         ln -sf $(pwd)/gcc/bin/* .
-        echo "PATH=$(pwd):$PATH" >> $GITHUB_ENV
+
+        # 添加到 PATH
+        cd ..
+        echo "PATH=$(pwd)/tc:$PATH" >> $GITHUB_ENV
 
         # 验证
-        clang --version || { echo "❌ Clang 无法运行"; exit 1; }
-        aarch64-linux-android-gcc --version || { echo "❌ GCC 无法运行"; exit 1; }
+        tc/clang/bin/clang --version || { echo "❌ Clang 启动失败"; exit 1; }
+        tc/gcc/bin/aarch64-linux-android-gcc --version || { echo "❌ GCC 启动失败"; exit 1; }
         echo "🎉 工具链准备完毕！"
 
     - name: Build Kernel
@@ -166,6 +147,7 @@ jobs:
         CC: clang
       run: |
         make O=out RMX1901_defconfig
+        echo "✅ defconfig 已生成"
         make O=out -j$(nproc) Image.gz-dtb dtbo.img
         cp out/Image.gz-dtb ${{ github.workspace }}/
         cp out/dtbo.img ${{ github.workspace }} || touch ${{ github.workspace }}/dtbo.img
