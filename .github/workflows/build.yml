@@ -20,8 +20,7 @@ jobs:
 
     - name: Checkout Kernel Source
       run: |
-        git clone --depth=1 --branch lineage-18.0 \
-          https://github.com/SagarMakhar/android_kernel_realme_sdm710 android-kernel
+        git clone --depth=1 --branch lineage-18.0 https://github.com/SagarMakhar/android_kernel_realme_sdm710 android-kernel
         cd android-kernel && echo "✅ 内核源码已克隆"
 
     - name: Patch Defconfig for Container Support
@@ -32,38 +31,38 @@ jobs:
           echo "❌ 错误：找不到 $CONFIG_FILE"
           exit 1
         fi
-        cat >> "$CONFIG_FILE" << 'EOF'
 
-# === 容器支持配置 ===
-CONFIG_NAMESPACES=y
-CONFIG_UTS_NS=y
-CONFIG_IPC_NS=y
-CONFIG_USER_NS=y
-CONFIG_PID_NS=y
-CONFIG_NET_NS=y
-CONFIG_CGROUPS=y
-CONFIG_CGROUP_MEMORY=y
-CONFIG_MEMCG=y
-CONFIG_MEMCG_SWAP=y
-CONFIG_OVERLAY_FS=y
-CONFIG_OVERLAY_FS_REDIRECT_DIR=y
-CONFIG_OVERLAY_FS_INDEX=y
-CONFIG_IKCONFIG=y
-CONFIG_IKCONFIG_PROC=y
-CONFIG_CHECKPOINT_RESTORE=y
-CONFIG_MODULES=y
-CONFIG_MODULE_UNLOAD=y
-CONFIG_BRIDGE_NETFILTER=y
-CONFIG_NF_CONNTRACK=y
-CONFIG_NF_DEFRAG_IPV4=y
-CONFIG_NF_DEFRAG_IPV6=y
-CONFIG_SECURITY_SELINUX=y
-EOF
+        echo "" >> "$CONFIG_FILE"
+        echo "# === 容器支持配置 ===" >> "$CONFIG_FILE"
+        echo "CONFIG_NAMESPACES=y" >> "$CONFIG_FILE"
+        echo "CONFIG_UTS_NS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IPC_NS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_USER_NS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_PID_NS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_NET_NS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_CGROUPS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_CGROUP_MEMORY=y" >> "$CONFIG_FILE"
+        echo "CONFIG_MEMCG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_MEMCG_SWAP=y" >> "$CONFIG_FILE"
+        echo "CONFIG_OVERLAY_FS=y" >> "$CONFIG_FILE"
+        echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> "$CONFIG_FILE"
+        echo "CONFIG_OVERLAY_FS_INDEX=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IKCONFIG=y" >> "$CONFIG_FILE"
+        echo "CONFIG_IKCONFIG_PROC=y" >> "$CONFIG_FILE"
+        echo "CONFIG_CHECKPOINT_RESTORE=y" >> "$CONFIG_FILE"
+        echo "CONFIG_MODULES=y" >> "$CONFIG_FILE"
+        echo "CONFIG_MODULE_UNLOAD=y" >> "$CONFIG_FILE"
+        echo "CONFIG_BRIDGE_NETFILTER=y" >> "$CONFIG_FILE"
+        echo "CONFIG_NF_CONNTRACK=y" >> "$CONFIG_FILE"
+        echo "CONFIG_NF_DEFRAG_IPV4=y" >> "$CONFIG_FILE"
+        echo "CONFIG_NF_DEFRAG_IPV6=y" >> "$CONFIG_FILE"
+        echo "CONFIG_SECURITY_SELINUX=y" >> "$CONFIG_FILE"
+
         echo "✅ 成功注入容器支持"
 
     - name: Install Dependencies
       run: |
-        sudo apt-get update
+        sudo apt-get update -qq
         sudo apt-get install -y bc bison flex libssl-dev libelf-dev zip
 
     - name: Download Toolchains
@@ -90,7 +89,7 @@ EOF
         make O=out -j$(nproc) Image.gz-dtb dtbo.img
         cp out/Image.gz-dtb ${{ github.workspace }}/
         cp out/dtbo.img ${{ github.workspace }} || touch ${{ github.workspace }}/dtbo.img
-        echo "✅ 编译完成"
+        echo "✅ 内核编译完成"
 
     - name: Download AnyKernel3
       run: |
